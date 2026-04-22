@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meeting Scheduler</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ─── PASTE YOUR FIREBASE CONFIG HERE ───────────────────────────────────────
+// Replace the object below with YOUR config from Firebase Console
+// (Project Settings → Your apps → SDK setup → Config)
+const firebaseConfig = {
+  apiKey: "AIzaSyAwzITDpzOnN2Gg1v7ofpSnnKEy0jsmJ_U",
+  authDomain: "biesecker-zoom-call-scheduler.firebaseapp.com",
+  projectId: "biesecker-zoom-call-scheduler",
+  storageBucket: "biesecker-zoom-call-scheduler.firebasestorage.app",
+  messagingSenderId: "234553028145",
+  appId: "1:234553028145:web:c4f2e908425c1e16872f10",
+  measurementId: "G-7MCNXHWYRY"
+};
+// ───────────────────────────────────────────────────────────────────────────
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+
+const SETUP_DOC  = "scheduler/setup";
+const VOTES_DOC  = "scheduler/votes";
+
+// ── Expose DB helpers to global scope ──────────────────────────────────────
+window._db = {
+  async getSetup() {
+    const snap = await getDoc(doc(db, "scheduler", "setup"));
+    return snap.exists() ? snap.data() : null;
+  },
+  async saveSetup(data) {
+    await setDoc(doc(db, "scheduler", "setup"), data, { merge: true });
+  },
+  async getVotes() {
+    const snap = await getDoc(doc(db, "scheduler", "votes"));
+    return snap.exists() ? snap.data() : {};
+  },
+  async saveVotes(data) {
+    await setDoc(doc(db, "scheduler", "votes"), data, { merge: true });
+  },
+  subscribeSetup(cb) {
+    return onSnapshot(doc(db, "scheduler", "setup"), snap => cb(snap.exists() ? snap.data() : null));
+  },
+  subscribeVotes(cb) {
+    return onSnapshot(doc(db, "scheduler", "votes"), snap => cb(snap.exists() ? snap.data() : {}));
+  }
+};
+
+// Signal app is ready
+window._dbReady = true;
+document.dispatchEvent(new Event('db-ready'));
+</script>
+
+<style>
+  :root {
+    --ink:        #0f1923;
+    --ink2:       #1e2d3d;
+    --paper:      #f4f1eb;
+    --cream:      #ebe6da;
+    --gold:       #c8a84b;
+    --gold-light: #e6d08e;
+    --rust:       #b5451b;
+    --sage:       #3d7a56;
+    --muted:      #7a7468;
+    --yes:        #3d7a56;
+    --maybe:      #c8a84b;
+    --no:         #b5451b;
+    --card:       #faf8f3;
+    --border:     #d8d2c4;
+    --shadow:     0 2px 12px rgba(15,25,35,0.08);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse at 15% 60%, rgba(200,168,75,0.07) 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 15%, rgba(61,122,86,0.05) 0%, transparent 50%);
+  }
+
+  /* ── Header ─────────────────────────────────────── */
+  header {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 1.75rem 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 3px solid var(--gold);
+  }
+
+  header h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.8rem;
+    color: var(--gold-light);
+    letter-spacing: 0.02em;
+  }
+
+  header p {
+    font-size: 0.78rem;
+    color: #7a8fa0;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 0.2rem;
+  }
+
+  .header-status {
+    font-size: 0.75rem;
+    color: #4a6278;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #4a6278;
+    animation: pulse 2s infinite;
+  }
+
+  .status-dot.connected { background: var(--sage); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+  }
+
+  /* ── Nav ─────────────────────────────────────────── */
+  nav {
+    background: var(--ink2);
+    padding: 0 2.5rem;
+    display: flex;
+    border-bottom: 1px solid #0f1923;
+  }
+
+  nav button {
+    background: none; border: none;
+    color: #6a8099;
+    padding: 0.9rem 1.4rem;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8rem; font-weight: 600;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s;
+    margin-bottom: -1px;
+  }
+
+  nav button:hover { color: var(--gold-light); }
+  nav button.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+  /* ── Main ────────────────────────────────────────── */
+  main { max-width: 860px; margin: 0 auto; padding: 2.5rem 2rem 4rem; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Section titles ─────────────────────────────── */
+  .section-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.5rem;
+    margin-bottom: 0.3rem;
+  }
+
+  .section-sub {
+    font-size: 0.85rem; color: var(--muted);
+    margin-bottom: 2rem; line-height: 1.6;
+  }
+
+  /* ── Cards ───────────────────────────────────────── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1.75rem;
+    margin-bottom: 1.25rem;
+    box-shadow: var(--shadow);
+  }
+
+  /* ── Lock screen ─────────────────────────────────── */
+  .lock-screen {
+    max-width: 380px;
+    margin: 3rem auto;
+    text-align: center;
+  }
+
+  .lock-icon {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    opacity: 0.4;
+  }
+
+  .lock-screen h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.4rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .lock-screen p {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
+  }
+
+  .lock-input-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  /* ── Forms ───────────────────────────────────────── */
+  label {
+    display: block;
+    font-size: 0.75rem; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.45rem;
+  }
+
+  input[type=date], input[type=text], input[type=password] {
+    width: 100%;
+    padding: 0.65rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: white;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  input:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(200,168,75,0.14);
+  }
+
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+  .form-col  { display: flex; flex-direction: column; }
+
+  /* ── Buttons ─────────────────────────────────────── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    padding: 0.7rem 1.4rem;
+    border: none; border-radius: 4px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem; font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: all 0.18s;
+  }
+
+  .btn-primary { background: var(--ink); color: var(--gold-light); }
+  .btn-primary:hover { background: var(--ink2); }
+
+  .btn-gold { background: var(--gold); color: var(--ink); }
+  .btn-gold:hover { background: #b8963e; }
+
+  .btn-danger { background: var(--rust); color: white; }
+  .btn-danger:hover { background: #933a15; }
+
+  .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--ink); }
+  .btn-outline:hover { border-color: var(--ink); }
+
+  .btn-sm { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
+
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Attendee grid ───────────────────────────────── */
+  .attendee-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 1.5rem; }
+
+  .attendee-card {
+    background: white; border: 2px solid var(--border);
+    border-radius: 5px; padding: 1rem 0.5rem;
+    text-align: center; cursor: pointer;
+    transition: all 0.18s;
+    font-size: 0.82rem; font-weight: 500; color: var(--muted);
+  }
+
+  .attendee-card:hover { border-color: var(--gold); color: var(--ink); transform: translateY(-1px); }
+  .attendee-card.selected { border-color: var(--gold); background: #fdf9ee; color: var(--ink); }
+  .attendee-card.voted { border-color: var(--sage); }
+
+  .attendee-card .initial {
+    display: block;
+    font-family: 'Playfair Display', serif;
+    font-size: 1.5rem;
+    margin-bottom: 0.3rem;
+    color: var(--ink);
+  }
+
+  .voted-tag {
+    display: block;
+    font-size: 0.68rem;
+    color: var(--sage);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 0.25rem;
+  }
+
+  /* ── Slot rows ───────────────────────────────────── */
+  .slot-row {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 0.55rem;
+    background: white;
+    flex-wrap: wrap;
+    transition: border-color 0.15s;
+  }
+
+  .slot-row.voted-yes   { border-left: 3px solid var(--yes); }
+  .slot-row.voted-maybe { border-left: 3px solid var(--maybe); }
+  .slot-row.voted-no    { border-left: 3px solid var(--no); }
+
+  .slot-label { flex: 1; min-width: 160px; }
+  .slot-date  { font-weight: 600; font-size: 0.92rem; }
+  .slot-time  { font-size: 0.78rem; color: var(--muted); letter-spacing: 0.02em; }
+
+  .vote-buttons { display: flex; gap: 0.4rem; }
+
+  .vote-btn {
+    padding: 0.42rem 0.9rem;
+    border: 1.5px solid var(--border);
+    border-radius: 4px;
+    background: white;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.78rem; font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.02em;
+  }
+
+  .vote-btn.yes   { border-color: var(--yes);   color: var(--yes); }
+  .vote-btn.maybe { border-color: var(--maybe); color: var(--maybe); }
+  .vote-btn.no    { border-color: var(--no);    color: var(--no); }
+  .vote-btn.active.yes   { background: var(--yes);   color: white; }
+  .vote-btn.active.maybe { background: var(--maybe); color: white; }
+  .vote-btn.active.no    { background: var(--no);    color: white; }
+
+  /* ── Progress bar ────────────────────────────────── */
+  .vote-progress {
+    display: flex; align-items: center; gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.82rem; color: var(--muted);
+  }
+
+  .progress-track {
+    flex: 1; height: 5px;
+    background: var(--cream); border-radius: 3px; overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%; background: var(--gold);
+    border-radius: 3px; transition: width 0.3s ease;
+  }
+
+  /* ── Result rows ─────────────────────────────────── */
+  .result-row {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 0.55rem;
+    background: white;
+    flex-wrap: wrap;
+    position: relative;
+  }
+
+  .result-row.winner {
+    border-color: var(--gold);
+    background: #fdf9ee;
+    box-shadow: 0 2px 14px rgba(200,168,75,0.15);
+  }
+
+  .result-label { flex: 1; min-width: 160px; }
+
+  .vote-pips { display: flex; gap: 0.35rem; flex-wrap: wrap; min-width: 110px; }
+
+  .pip {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65rem; font-weight: 700;
+    color: white;
+  }
+
+  .pip.yes   { background: var(--yes); }
+  .pip.maybe { background: var(--maybe); }
+  .pip.no    { background: var(--no); }
+  .pip.empty { background: #e0dbd2; color: #aaa; }
+
+  .score-section { display: flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; min-width: 90px; }
+
+  .score-num {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.5rem; font-weight: 700;
+    color: var(--ink);
+  }
+
+  .score-bar-wrap { width: 90px; height: 5px; background: var(--cream); border-radius: 3px; overflow: hidden; }
+  .score-bar { height: 100%; background: var(--gold); border-radius: 3px; transition: width 0.7s ease; }
+
+  .winner-badge {
+    font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--gold); background: var(--ink);
+    padding: 0.2rem 0.65rem; border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  .tiebreak-note {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 0.1rem;
+  }
+
+  /* ── Legend ──────────────────────────────────────── */
+  .legend {
+    display: flex; gap: 1.5rem;
+    margin-bottom: 1.5rem; flex-wrap: wrap;
+  }
+
+  .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted); }
+  .legend-dot  { width: 10px; height: 10px; border-radius: 50%; }
+  .legend-dot.yes   { background: var(--yes); }
+  .legend-dot.maybe { background: var(--maybe); }
+  .legend-dot.no    { background: var(--no); }
+
+  /* ── Scoring note ────────────────────────────────── */
+  .scoring-note {
+    background: var(--cream);
+    border-left: 3px solid var(--gold);
+    padding: 0.8rem 1rem;
+    font-size: 0.82rem; color: var(--muted);
+    border-radius: 0 4px 4px 0;
+    margin-bottom: 1.25rem;
+    line-height: 1.6;
+  }
+
+  /* ── Divider ─────────────────────────────────────── */
+  .divider {
+    border: none; border-top: 1px solid var(--border);
+    margin: 1.5rem 0;
+  }
+
+  .card-label {
+    font-size: 0.75rem; font-weight: 600;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 1rem;
+  }
+
+  /* ── Preview list ────────────────────────────────── */
+  .slot-preview-item {
+    padding: 0.45rem 0;
+    border-bottom: 1px solid var(--cream);
+    font-size: 0.88rem;
+    display: flex; gap: 1rem;
+  }
+
+  .slot-preview-item:last-child { border-bottom: none; }
+
+  /* ── No slots ────────────────────────────────────── */
+  .no-slots {
+    text-align: center; padding: 3rem 1rem;
+    color: var(--muted); font-size: 0.9rem;
+  }
+
+  .no-slots span { display: block; font-size: 2.2rem; margin-bottom: 0.75rem; opacity: 0.35; }
+
+  /* ── Toast ───────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 2rem; left: 50%;
+    transform: translateX(-50%) translateY(3rem);
+    background: var(--ink); color: var(--gold-light);
+    padding: 0.7rem 1.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem; font-weight: 500;
+    letter-spacing: 0.03em;
+    pointer-events: none; opacity: 0;
+    transition: all 0.28s ease;
+    z-index: 999;
+    border-left: 3px solid var(--gold);
+    white-space: nowrap;
+  }
+
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.error { border-left-color: var(--rust); color: #f5b09a; }
+
+  /* ── Loading overlay ─────────────────────────────── */
+  #loading {
+    position: fixed; inset: 0;
+    background: var(--ink);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 9999;
+    transition: opacity 0.4s;
+  }
+
+  #loading h2 {
+    font-family: 'Playfair Display', serif;
+    color: var(--gold-light);
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+  }
+
+  #loading p { color: #5a7a90; font-size: 0.85rem; letter-spacing: 0.06em; }
+
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid #2a3a4a;
+    border-top-color: var(--gold);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 1.5rem;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Password reset section ──────────────────────── */
+  .danger-zone {
+    border: 1px solid #e8c8c0;
+    border-radius: 5px;
+    padding: 1.25rem 1.5rem;
+    background: #fdf8f7;
+    margin-top: 1.5rem;
+  }
+
+  .danger-zone h4 {
+    font-size: 0.78rem; font-weight: 700;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--rust); margin-bottom: 0.75rem;
+  }
+
+  /* ── Responsive ──────────────────────────────────── */
+  @media (max-width: 600px) {
+    header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+    .attendee-grid { grid-template-columns: repeat(2, 1fr); }
+    .form-row { grid-template-columns: 1fr; }
+    nav { overflow-x: auto; padding: 0 1rem; }
+    main { padding: 1.5rem 1rem 4rem; }
+  }
+
+  /* ── Misc ────────────────────────────────────────── */
+  .flex-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .mt-1 { margin-top: 0.5rem; }
+  .mt-2 { margin-top: 1rem; }
+  .mt-3 { margin-top: 1.5rem; }
+  .text-muted { color: var(--muted); font-size: 0.85rem; }
+  strong { font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading">
+  <div class="spinner"></div>
+  <h2>Meeting Scheduler</h2>
+  <p>Connecting to database…</p>
+</div>
+
+<header>
+  <div>
+    <h1>Meeting Scheduler</h1>
+    <p>Find a time that works for everyone</p>
+  </div>
+  <div class="header-status">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">Connecting…</span>
+  </div>
+</header>
+
+<nav>
+  <button class="active" data-panel="vote"    onclick="navTo('vote',event)">🗳 Cast Votes</button>
+  <button               data-panel="results"  onclick="navTo('results',event)">📊 Results</button>
+  <button               data-panel="admin"    onclick="navTo('admin',event)">⚙ Admin</button>
+</nav>
+
+<main>
+
+  <!-- ══════════════ VOTE PANEL ══════════════ -->
+  <div id="panel-vote" class="panel active">
+    <h2 class="section-title">Cast Your Vote</h2>
+    <p class="section-sub">Select your name, mark every date option, then save. You must vote on <strong>all options</strong> before saving.</p>
+
+    <div class="card" style="padding:1.25rem 1.75rem;">
+      <div class="card-label">Who are you?</div>
+      <div class="attendee-grid" id="attendeeGrid"></div>
+    </div>
+
+    <div class="scoring-note">
+      <strong>Scoring:</strong> Yes = 2 pts &nbsp;·&nbsp; Maybe = 1 pt &nbsp;·&nbsp; No = 0 pts
+    </div>
+
+    <div id="voteProgress" style="display:none;" class="vote-progress">
+      <span id="progressLabel">0 of 0 voted</span>
+      <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    </div>
+
+    <div id="voteSlots">
+      <div class="no-slots"><span>📅</span>No meeting slots yet.<br>The admin needs to set up the date window first.</div>
+    </div>
+
+    <div id="voteSaveRow" style="display:none; margin-top:1.5rem;" class="flex-row">
+      <button class="btn btn-primary" id="saveBtn" onclick="saveVotes()" disabled>Save My Votes</button>
+      <button class="btn btn-outline btn-sm" onclick="clearMyVotes()">Clear &amp; Start Over</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ RESULTS PANEL ══════════════ -->
+  <div id="panel-results" class="panel">
+    <!-- Lock screen -->
+    <div id="resultsLock" class="lock-screen" style="display:none;">
+      <div class="lock-icon">🔒</div>
+      <h2>Results are Private</h2>
+      <p>Enter the admin password to view results.</p>
+      <div class="lock-input-row">
+        <input type="password" id="resultsPassword" placeholder="Password" onkeydown="if(event.key==='Enter')unlockResults()">
+        <button class="btn btn-primary" onclick="unlockResults()">Unlock</button>
+      </div>
+    </div>
+
+    <!-- Results content -->
+    <div id="resultsContent" style="display:none;">
+      <h2 class="section-title">Results</h2>
+      <p class="section-sub">Ranked by score. Ties are broken by fewest No votes. The top slot is the recommended time.</p>
+
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot yes"></div> Yes (2 pts)</div>
+        <div class="legend-item"><div class="legend-dot maybe"></div> Maybe (1 pt)</div>
+        <div class="legend-item"><div class="legend-dot no"></div> No (0 pts)</div>
+        <div class="legend-item"><div class="legend-dot empty" style="background:#e0dbd2;"></div> No response</div>
+      </div>
+
+      <div id="resultsList"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════ ADMIN PANEL ══════════════ -->
+  <div id="panel-admin" class="panel">
+
+    <!-- Lock screen (first-time setup OR password gate) -->
+    <div id="adminLock">
+      <div class="lock-screen" id="adminLockFirst" style="display:none;">
+        <div class="lock-icon">🔐</div>
+        <h2>Create Admin Password</h2>
+        <p>This is your first time here. Set a password to protect the Admin and Results pages.</p>
+        <div class="form-col mt-2">
+          <label>New Password</label>
+          <input type="password" id="newPwField" placeholder="Choose a password">
+        </div>
+        <div class="form-col mt-1">
+          <label>Confirm Password</label>
+          <input type="password" id="confirmPwField" placeholder="Confirm password" style="margin-bottom:1rem;" onkeydown="if(event.key==='Enter')createPassword()">
+        </div>
+        <button class="btn btn-gold" onclick="createPassword()" style="width:100%;">Set Password & Enter →</button>
+      </div>
+
+      <div class="lock-screen" id="adminLockGate" style="display:none;">
+        <div class="lock-icon">🔒</div>
+        <h2>Admin Access</h2>
+        <p>Enter the admin password to configure the meeting scheduler.</p>
+        <div class="lock-input-row">
+          <input type="password" id="adminPassword" placeholder="Password" onkeydown="if(event.key==='Enter')unlockAdmin()">
+          <button class="btn btn-primary" onclick="unlockAdmin()">Unlock</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin content -->
+    <div id="adminContent" style="display:none;">
+      <h2 class="section-title">Admin Setup</h2>
+      <p class="section-sub">Define the meeting window. Every <strong>Sunday</strong> → <strong>2:00 PM</strong> slot. Every <strong>weekday (Mon–Fri)</strong> → <strong>7:30 PM</strong> slot. Saturdays are skipped.</p>
+
+      <div class="card">
+        <div class="card-label">Date Window</div>
+        <div class="form-row">
+          <div class="form-col">
+            <label for="startDate">Start Date</label>
+            <input type="date" id="startDate">
+          </div>
+          <div class="form-col">
+            <label for="endDate">End Date</label>
+            <input type="date" id="endDate">
+          </div>
+        </div>
+
+        <hr class="divider">
+        <div class="card-label">Attendee Names</div>
+        <div class="form-row">
+          <div class="form-col"><label>Attendee 1</label><input type="text" id="name1" placeholder="e.g. Alice"></div>
+          <div class="form-col"><label>Attendee 2</label><input type="text" id="name2" placeholder="e.g. Bob"></div>
+          <div class="form-col"><label>Attendee 3</label><input type="text" id="name3" placeholder="e.g. Carol"></div>
+          <div class="form-col"><label>Attendee 4</label><input type="text" id="name4" placeholder="e.g. David"></div>
+        </div>
+
+        <div class="flex-row">
+          <button class="btn btn-gold" onclick="generateSlots()">Generate Meeting Options →</button>
+          <button class="btn btn-outline btn-sm" onclick="clearAllVotes()">Clear All Votes</button>
+        </div>
+      </div>
+
+      <div id="adminPreview"></div>
+
+      <!-- Password reset -->
+      <div class="danger-zone">
+        <h4>⚠ Change Admin Password</h4>
+        <div class="form-row" style="margin-bottom:0.75rem;">
+          <div class="form-col"><label>New Password</label><input type="password" id="resetNew" placeholder="New password"></div>
+          <div class="form-col"><label>Confirm New Password</label><input type="password" id="resetConfirm" placeholder="Confirm"></div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="resetPassword()">Update Password</button>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  CONSTANTS & STATE
+// ═══════════════════════════════════════════════════════════
+const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const SCORE  = { yes: 2, maybe: 1, no: 0 };
+
+let setup = null;   // { slots, attendees, passwordHash }
+let votes = {};     // { attendeeName: { slotId: 'yes'|'maybe'|'no' } }
+let activeAttendee = null;
+let sessionVotes   = {};   // local draft before saving
+let adminUnlocked   = false;
+let resultsUnlocked = false;
+let unsubSetup = null;
+let unsubVotes = null;
+
+// ═══════════════════════════════════════════════════════════
+//  INIT — wait for Firebase
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('db-ready', async () => {
+  try {
+    [setup, votes] = await Promise.all([window._db.getSetup(), window._db.getVotes()]);
+    hideLoading();
+    subscribeRealtime();
+    renderAll();
+  } catch(e) {
+    document.querySelector('#loading p').textContent = 'Error: ' + e.message + '. Check Firebase config.';
+    document.querySelector('#loading p').style.color = '#f5b09a';
+  }
+});
+
+// Fallback: if Firebase module fails to load entirely
+setTimeout(() => {
+  if (!window._dbReady) {
+    document.querySelector('#loading p').textContent = 'Firebase not configured. See SETUP.md.';
+    document.querySelector('#loading p').style.color = '#f5b09a';
+    document.querySelector('.spinner').style.display = 'none';
+  }
+}, 8000);
+
+function hideLoading() {
+  const el = document.getElementById('loading');
+  el.style.opacity = '0';
+  setTimeout(() => el.remove(), 400);
+  document.getElementById('statusDot').classList.add('connected');
+  document.getElementById('statusText').textContent = 'Live';
+}
+
+function subscribeRealtime() {
+  unsubSetup = window._db.subscribeSetup(data => {
+    setup = data;
+    renderAll();
+  });
+  unsubVotes = window._db.subscribeVotes(data => {
+    votes = data || {};
+    renderAll();
+  });
+}
+
+function renderAll() {
+  renderVotePanel();
+  if (resultsUnlocked) renderResults();
+  if (adminUnlocked)   renderAdminPreview();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  NAVIGATION
+// ═══════════════════════════════════════════════════════════
+function navTo(name, e) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  e.currentTarget.classList.add('active');
+
+  if (name === 'results') initResultsPanel();
+  if (name === 'admin')   initAdminPanel();
+  if (name === 'vote')    renderVotePanel();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PASSWORD HELPERS  (simple hash, good enough for this use case)
+// ═══════════════════════════════════════════════════════════
+async function hashPassword(pw) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+async function checkPassword(pw) {
+  if (!setup?.passwordHash) return false;
+  return (await hashPassword(pw)) === setup.passwordHash;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ADMIN PANEL
+// ═══════════════════════════════════════════════════════════
+function initAdminPanel() {
+  const content = document.getElementById('adminContent');
+  const lock    = document.getElementById('adminLock');
+  const first   = document.getElementById('adminLockFirst');
+  const gate    = document.getElementById('adminLockGate');
+
+  if (adminUnlocked) {
+    lock.style.display    = 'none';
+    content.style.display = 'block';
+    prefillAdminForm();
+    renderAdminPreview();
+    return;
+  }
+
+  content.style.display = 'none';
+  lock.style.display    = 'block';
+
+  if (!setup?.passwordHash) {
+    first.style.display = 'block';
+    gate.style.display  = 'none';
+  } else {
+    first.style.display = 'none';
+    gate.style.display  = 'block';
+    setTimeout(() => document.getElementById('adminPassword')?.focus(), 100);
+  }
+}
+
+async function createPassword() {
+  const pw  = document.getElementById('newPwField').value.trim();
+  const pw2 = document.getElementById('confirmPwField').value.trim();
+  if (!pw)        { toast('Please enter a password.', true); return; }
+  if (pw !== pw2) { toast('Passwords do not match.', true); return; }
+  const hash = await hashPassword(pw);
+  if (!setup) setup = {};
+  setup.passwordHash = hash;
+  await window._db.saveSetup(setup);
+  adminUnlocked = true;
+  initAdminPanel();
+  toast('✓ Password created. Welcome, Admin!');
+}
+
+async function unlockAdmin() {
+  const pw = document.getElementById('adminPassword').value;
+  if (await checkPassword(pw)) {
+    adminUnlocked = true;
+    initAdminPanel();
+  } else {
+    toast('Incorrect password.', true);
+    document.getElementById('adminPassword').value = '';
+  }
+}
+
+async function resetPassword() {
+  const pw  = document.getElementById('resetNew').value.trim();
+  const pw2 = document.getElementById('resetConfirm').value.trim();
+  if (!pw)        { toast('Enter a new password.', true); return; }
+  if (pw !== pw2) { toast('Passwords do not match.', true); return; }
+  setup.passwordHash = await hashPassword(pw);
+  await window._db.saveSetup(setup);
+  document.getElementById('resetNew').value = '';
+  document.getElementById('resetConfirm').value = '';
+  toast('✓ Password updated.');
+}
+
+function prefillAdminForm() {
+  if (!setup) return;
+  (setup.attendees || []).forEach((n, i) => {
+    const el = document.getElementById('name' + (i+1));
+    if (el) el.value = n;
+  });
+  // default dates: today → +28 days
+  const today = new Date();
+  const end   = new Date(); end.setDate(today.getDate() + 28);
+  const fmt   = d => d.toISOString().slice(0,10);
+  if (!document.getElementById('startDate').value) document.getElementById('startDate').value = fmt(today);
+  if (!document.getElementById('endDate').value)   document.getElementById('endDate').value   = fmt(end);
+}
+
+async function generateSlots() {
+  const s = document.getElementById('startDate').value;
+  const e = document.getElementById('endDate').value;
+  if (!s || !e)  { toast('Select both a start and end date.', true); return; }
+  if (s > e)     { toast('Start must be before end date.', true); return; }
+
+  const names = [1,2,3,4].map(i => document.getElementById('name'+i).value.trim()).filter(Boolean);
+  if (names.length < 2) { toast('Enter at least 2 attendee names.', true); return; }
+
+  const slots = [];
+  let cur = new Date(s + 'T12:00:00');
+  const end2 = new Date(e + 'T12:00:00');
+  while (cur <= end2) {
+    const dow = cur.getDay();
+    if (dow === 0)                  slots.push(makeSlot(cur, '2:00 PM'));
+    else if (dow >= 1 && dow <= 5)  slots.push(makeSlot(cur, '7:30 PM'));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  if (!slots.length) { toast('No valid dates in that window.', true); return; }
+
+  setup = { ...(setup||{}), slots, attendees: names };
+  votes = {};
+  await Promise.all([window._db.saveSetup(setup), window._db.saveVotes({})]);
+  toast(`✓ ${slots.length} slots created — votes cleared.`);
+  renderAdminPreview();
+}
+
+function makeSlot(date, time) {
+  const id    = date.toISOString().slice(0,10) + '_' + time.replace(':','').replace(' ','');
+  const label = `${DAYS[date.getDay()]}, ${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+  return { id, label, day: DAYS[date.getDay()], time };
+}
+
+function renderAdminPreview() {
+  const el = document.getElementById('adminPreview');
+  if (!setup?.slots?.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="card" style="border-color:var(--sage);">
+      <p class="card-label" style="color:var(--sage);">✓ ${setup.slots.length} active slot${setup.slots.length>1?'s':''}</p>
+      ${setup.slots.map(sl => `
+        <div class="slot-preview-item">
+          <span style="color:var(--muted);min-width:80px;">${sl.day}</span>
+          <span style="font-weight:500;flex:1;">${sl.label}</span>
+          <span style="color:var(--muted);">@ ${sl.time}</span>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function clearAllVotes() {
+  if (!confirm('Clear ALL votes from every attendee? This cannot be undone.')) return;
+  votes = {};
+  await window._db.saveVotes({});
+  toast('✓ All votes cleared.');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RESULTS PANEL
+// ═══════════════════════════════════════════════════════════
+function initResultsPanel() {
+  if (resultsUnlocked) {
+    showResultsContent();
+    return;
+  }
+  document.getElementById('resultsLock').style.display    = 'block';
+  document.getElementById('resultsContent').style.display = 'none';
+  setTimeout(() => document.getElementById('resultsPassword')?.focus(), 100);
+}
+
+async function unlockResults() {
+  const pw = document.getElementById('resultsPassword').value;
+  if (await checkPassword(pw)) {
+    resultsUnlocked = true;
+    showResultsContent();
+  } else {
+    toast('Incorrect password.', true);
+    document.getElementById('resultsPassword').value = '';
+  }
+}
+
+function showResultsContent() {
+  document.getElementById('resultsLock').style.display    = 'none';
+  document.getElementById('resultsContent').style.display = 'block';
+  renderResults();
+}
+
+function renderResults() {
+  const el = document.getElementById('resultsList');
+  if (!setup?.slots?.length) {
+    el.innerHTML = `<div class="no-slots"><span>📊</span>No slots configured yet.</div>`;
+    return;
+  }
+
+  const attendees   = setup.attendees || [];
+  const maxPossible = attendees.length * 2;
+
+  const scored = setup.slots.map(sl => {
+    let score = 0, nos = 0;
+    const breakdown = {};
+    attendees.forEach(name => {
+      const v = votes[name]?.[sl.id] || 'none';
+      breakdown[name] = v;
+      score += SCORE[v] || 0;
+      if (v === 'no') nos++;
+    });
+    return { ...sl, score, nos, breakdown };
+  });
+
+  // Sort: primary = score desc, tiebreak = nos asc
+  scored.sort((a, b) => b.score !== a.score ? b.score - a.score : a.nos - b.nos);
+
+  const topScore = scored[0]?.score ?? 0;
+  const isTie    = scored.filter(s => s.score === topScore).length > 1;
+  // After tiebreak, winner is the first item
+  const winnerIsTiebroken = isTie && scored[0].nos < scored[1]?.nos;
+
+  el.innerHTML = scored.map((sl, i) => {
+    const isWinner = i === 0 && sl.score > 0;
+    const pct = maxPossible > 0 ? Math.round((sl.score / maxPossible) * 100) : 0;
+
+    const pips = attendees.map(name => {
+      const v = sl.breakdown[name];
+      const cls = (v === 'none') ? 'empty' : v;
+      const letter = name[0].toUpperCase();
+      return `<div class="pip ${cls}" title="${name}: ${v==='none'?'no response':v}">${letter}</div>`;
+    }).join('');
+
+    const tieNote = (isWinner && winnerIsTiebroken)
+      ? `<div class="tiebreak-note">Tiebreaker: fewest No votes (${sl.nos})</div>` : '';
+
+    return `
+      <div class="result-row ${isWinner?'winner':''}">
+        <div class="result-label">
+          <div class="slot-date">${sl.label}</div>
+          <div class="slot-time">${sl.time}</div>
+          ${tieNote}
+        </div>
+        <div class="vote-pips">${pips}</div>
+        <div class="score-section">
+          <div class="score-num">${sl.score}</div>
+          <div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div></div>
+          <div style="font-size:0.68rem;color:var(--muted);">${pct}% of max</div>
+        </div>
+        ${isWinner ? '<div class="winner-badge">★ Best Pick</div>' : ''}
+      </div>`;
+  }).join('');
+
+  if (topScore > 0) {
+    const w = scored[0];
+    el.innerHTML += `
+      <div style="margin-top:1.75rem;padding:1.25rem 1.5rem;background:var(--ink);color:var(--gold-light);border-radius:5px;line-height:1.7;">
+        <strong style="font-family:'Playfair Display',serif;font-size:1.15rem;color:var(--gold);display:block;margin-bottom:0.2rem;">
+          Recommended Meeting Time
+        </strong>
+        ${w.label} at ${w.time}<br>
+        <span style="font-size:0.78rem;color:#6a8099;">
+          Score: ${w.score} / ${maxPossible} &nbsp;·&nbsp; ${Math.round((w.score/maxPossible)*100)}% of maximum possible
+          ${winnerIsTiebroken ? ' &nbsp;·&nbsp; Selected by tiebreaker (fewest No votes)' : ''}
+        </span>
+      </div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  VOTE PANEL
+// ═══════════════════════════════════════════════════════════
+function renderVotePanel() {
+  renderAttendeeGrid();
+  renderVoteSlots();
+  updateProgress();
+  updateSaveButton();
+}
+
+function renderAttendeeGrid() {
+  const grid = document.getElementById('attendeeGrid');
+  if (!setup?.attendees?.length) {
+    grid.innerHTML = `<p class="text-muted" style="grid-column:1/-1">No attendees configured yet.</p>`;
+    return;
+  }
+
+  grid.innerHTML = setup.attendees.map(name => {
+    const hasVoted = hasAllVotes(name, votes[name] || {});
+    return `
+      <div class="attendee-card ${activeAttendee===name?'selected':''} ${hasVoted?'voted':''}"
+           onclick="selectAttendee('${escAttr(name)}')">
+        <span class="initial">${name[0].toUpperCase()}</span>
+        ${name}
+        ${hasVoted ? '<span class="voted-tag">✓ Saved</span>' : ''}
+      </div>`;
+  }).join('');
+}
+
+function hasAllVotes(name, voteObj) {
+  if (!setup?.slots?.length) return false;
+  return setup.slots.every(sl => voteObj[sl.id] && voteObj[sl.id] !== 'none');
+}
+
+function renderVoteSlots() {
+  const el = document.getElementById('voteSlots');
+  if (!setup?.slots?.length) {
+    el.innerHTML = `<div class="no-slots"><span>📅</span>No slots yet.<br>Ask the Admin to generate meeting options.</div>`;
+    document.getElementById('voteSaveRow').style.display    = 'none';
+    document.getElementById('voteProgress').style.display  = 'none';
+    return;
+  }
+
+  document.getElementById('voteProgress').style.display = activeAttendee ? 'flex' : 'none';
+  document.getElementById('voteSaveRow').style.display   = activeAttendee ? 'flex' : 'none';
+
+  el.innerHTML = setup.slots.map(sl => {
+    const myVote  = sessionVotes[sl.id] || '';
+    const slClass = myVote ? `voted-${myVote}` : '';
+    return `
+      <div class="slot-row ${slClass}" id="slotrow-${sl.id}">
+        <div class="slot-label">
+          <div class="slot-date">${sl.label}</div>
+          <div class="slot-time">${sl.time}</div>
+        </div>
+        <div class="vote-buttons" id="btns-${sl.id}">
+          <button class="vote-btn yes   ${myVote==='yes'   ?'active':''}" onclick="castVote('${sl.id}','yes')">Yes</button>
+          <button class="vote-btn maybe ${myVote==='maybe' ?'active':''}" onclick="castVote('${sl.id}','maybe')">Maybe</button>
+          <button class="vote-btn no    ${myVote==='no'    ?'active':''}" onclick="castVote('${sl.id}','no')">No</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function selectAttendee(name) {
+  activeAttendee = name;
+  // Load their saved votes as the starting draft
+  sessionVotes = { ...(votes[name] || {}) };
+  renderVotePanel();
+}
+
+function castVote(slotId, val) {
+  if (!activeAttendee) { toast('Select your name first.', true); return; }
+  sessionVotes[slotId] = val;
+
+  // Update buttons
+  const btns = document.querySelectorAll(`#btns-${slotId} .vote-btn`);
+  btns.forEach(b => {
+    b.classList.remove('active');
+    if (b.classList.contains(val)) b.classList.add('active');
+  });
+
+  // Update row border
+  const row = document.getElementById(`slotrow-${slotId}`);
+  if (row) {
+    row.classList.remove('voted-yes','voted-maybe','voted-no');
+    row.classList.add('voted-' + val);
+  }
+
+  updateProgress();
+  updateSaveButton();
+}
+
+function updateProgress() {
+  if (!activeAttendee || !setup?.slots?.length) return;
+  const total   = setup.slots.length;
+  const answered = setup.slots.filter(sl => sessionVotes[sl.id]).length;
+  const pct     = Math.round((answered / total) * 100);
+  document.getElementById('progressLabel').textContent = `${answered} of ${total} voted`;
+  document.getElementById('progressFill').style.width  = pct + '%';
+}
+
+function updateSaveButton() {
+  const btn = document.getElementById('saveBtn');
+  if (!btn) return;
+  const allDone = setup?.slots?.length > 0 && setup.slots.every(sl => sessionVotes[sl.id]);
+  btn.disabled = !allDone || !activeAttendee;
+  btn.textContent = allDone ? 'Save My Votes ✓' : 'Vote on all options to save';
+}
+
+async function saveVotes() {
+  if (!activeAttendee) return;
+  if (!setup?.slots?.every(sl => sessionVotes[sl.id])) {
+    toast('Please vote on every option before saving.', true); return;
+  }
+  votes[activeAttendee] = { ...sessionVotes };
+  await window._db.saveVotes(votes);
+  toast(`✓ Votes saved for ${activeAttendee}`);
+  renderAttendeeGrid();
+}
+
+function clearMyVotes() {
+  sessionVotes = {};
+  renderVoteSlots();
+  updateProgress();
+  updateSaveButton();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg, isError = false) {
+  const t = document.getElementById('toast');
+  clearTimeout(toastTimer);
+  t.textContent = msg;
+  t.className   = 'show' + (isError ? ' error' : '');
+  toastTimer    = setTimeout(() => t.className = '', 3200);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  UTIL
+// ═══════════════════════════════════════════════════════════
+function escAttr(str) { return str.replace(/'/g, "\\'"); }
+</script>
+</body>
+</html>
