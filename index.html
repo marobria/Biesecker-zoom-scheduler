@@ -754,8 +754,11 @@ document.dispatchEvent(new Event('db-ready'));
         </div>
 
         <hr class="divider">
-        <div class="card-label">Days &amp; Times</div>
-        <p class="text-muted mt-1" style="margin-bottom:0.5rem;">Turn on any day of the week you want to offer, then add one or more times for that day.</p>
+        <div class="card-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Days &amp; Times</span>
+          <span id="dayTimesSavedTag" style="font-size:0.68rem;font-weight:700;letter-spacing:0.06em;color:var(--sage);opacity:0;transition:opacity 0.3s;">✓ Saved</span>
+        </div>
+        <p class="text-muted mt-1" style="margin-bottom:0.5rem;">Turn on any day of the week you want to offer, then add one or more times for that day. These are saved automatically as your defaults.</p>
         <div id="dayTimesEditor"></div>
 
         <hr class="divider">
@@ -1027,10 +1030,27 @@ function readDayConfigFromDOM() {
   return cfg;
 }
 
+// Days & Times are standing defaults, saved the moment they change — not
+// only when "Generate Meeting Options" is clicked. Otherwise editing a day
+// and navigating away without generating silently discards the edit.
+async function saveDayConfig() {
+  setup = { ...(setup||{}), dayConfig: cloneDayConfig(dayConfig) };
+  await window._db.saveSetup(setup);
+  flashDayTimesSaved();
+}
+
+function flashDayTimesSaved() {
+  const tag = document.getElementById('dayTimesSavedTag');
+  if (!tag) return;
+  tag.style.opacity = '1';
+  clearTimeout(flashDayTimesSaved._t);
+  flashDayTimesSaved._t = setTimeout(() => { tag.style.opacity = '0'; }, 1400);
+}
+
 // Every one of these rebuilds the whole editor grid, which would otherwise
 // discard an in-progress edit on a DIFFERENT day (e.g. a time picker that
 // hasn't fired 'change' yet) — so pull live DOM values in first.
-function toggleDay(day) {
+async function toggleDay(day) {
   // The checkbox's own 'checked' has already flipped by the time 'change'
   // fires, so readDayConfigFromDOM() already reflects the new state here —
   // don't flip it again.
@@ -1039,22 +1059,26 @@ function toggleDay(day) {
     dayConfig[day].times = ['19:00'];
   }
   renderDayTimesEditor();
+  await saveDayConfig();
 }
 
-function addDayTime(day) {
+async function addDayTime(day) {
   dayConfig = readDayConfigFromDOM();
   dayConfig[day].times.push('19:00');
   renderDayTimesEditor();
+  await saveDayConfig();
 }
 
-function removeDayTime(day, idx) {
+async function removeDayTime(day, idx) {
   dayConfig = readDayConfigFromDOM();
   dayConfig[day].times.splice(idx, 1);
   renderDayTimesEditor();
+  await saveDayConfig();
 }
 
-function updateDayTime(day, idx, val) {
+async function updateDayTime(day, idx, val) {
   dayConfig[day].times[idx] = val;
+  await saveDayConfig();
 }
 
 function formatTime12(t) {
