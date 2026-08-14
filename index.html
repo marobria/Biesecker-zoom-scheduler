@@ -994,13 +994,13 @@ function renderDayTimesEditor() {
     return `
       <div class="day-time-row" style="opacity:${enabled ? 1 : 0.5};">
         <label class="day-toggle">
-          <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleDay('${day}')">
+          <input type="checkbox" data-day="${day}" ${enabled ? 'checked' : ''} onchange="toggleDay('${day}')">
           ${day}
         </label>
         <div class="times-list">
           ${times.map((t, i) => `
             <span class="time-chip">
-              <input type="time" value="${t}" ${enabled ? '' : 'disabled'}
+              <input type="time" data-day="${day}" data-idx="${i}" value="${t}" ${enabled ? '' : 'disabled'}
                      onchange="updateDayTime('${day}',${i},this.value)">
               <button type="button" ${enabled ? '' : 'disabled'} title="Remove this time"
                       onclick="removeDayTime('${day}',${i})">×</button>
@@ -1012,8 +1012,29 @@ function renderDayTimesEditor() {
   }).join('');
 }
 
+// Reads the live form state directly from the DOM rather than trusting the
+// change-event-synced dayConfig var, so an in-progress edit (e.g. a native
+// time-picker value the browser hasn't fired 'change' for yet) is never lost.
+function readDayConfigFromDOM() {
+  const cfg = {};
+  DAYS.forEach(day => {
+    const cb = document.querySelector(`.day-toggle input[type="checkbox"][data-day="${day}"]`);
+    const times = Array.from(document.querySelectorAll(`input[type="time"][data-day="${day}"]`))
+      .map(inp => inp.value)
+      .filter(Boolean);
+    cfg[day] = { enabled: cb ? cb.checked : false, times };
+  });
+  return cfg;
+}
+
+// Every one of these rebuilds the whole editor grid, which would otherwise
+// discard an in-progress edit on a DIFFERENT day (e.g. a time picker that
+// hasn't fired 'change' yet) — so pull live DOM values in first.
 function toggleDay(day) {
-  dayConfig[day].enabled = !dayConfig[day].enabled;
+  // The checkbox's own 'checked' has already flipped by the time 'change'
+  // fires, so readDayConfigFromDOM() already reflects the new state here —
+  // don't flip it again.
+  dayConfig = readDayConfigFromDOM();
   if (dayConfig[day].enabled && dayConfig[day].times.length === 0) {
     dayConfig[day].times = ['19:00'];
   }
@@ -1021,11 +1042,13 @@ function toggleDay(day) {
 }
 
 function addDayTime(day) {
+  dayConfig = readDayConfigFromDOM();
   dayConfig[day].times.push('19:00');
   renderDayTimesEditor();
 }
 
 function removeDayTime(day, idx) {
+  dayConfig = readDayConfigFromDOM();
   dayConfig[day].times.splice(idx, 1);
   renderDayTimesEditor();
 }
@@ -1050,6 +1073,8 @@ async function generateSlots() {
 
   const names = [1,2,3,4].map(i => document.getElementById('name'+i).value.trim()).filter(Boolean);
   if (names.length < 2) { toast('Enter at least 2 attendee names.', true); return; }
+
+  dayConfig = readDayConfigFromDOM();
 
   const activeDays = DAYS.filter(d => dayConfig[d].enabled && dayConfig[d].times.length > 0);
   if (!activeDays.length) { toast('Turn on at least one day and add a time.', true); return; }
