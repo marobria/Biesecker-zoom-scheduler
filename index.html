@@ -465,6 +465,59 @@ document.dispatchEvent(new Event('db-ready'));
     color: var(--muted); margin-bottom: 1rem;
   }
 
+  /* ── Day/Time editor ─────────────────────────────── */
+  .day-time-row {
+    display: flex; align-items: flex-start; gap: 1rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--cream);
+    transition: opacity 0.15s;
+  }
+  .day-time-row:last-child { border-bottom: none; }
+
+  .day-toggle {
+    display: flex; align-items: center; gap: 0.55rem;
+    min-width: 140px;
+    font-size: 0.88rem; font-weight: 600;
+    text-transform: none; letter-spacing: normal;
+    color: var(--ink);
+    cursor: pointer;
+    margin-bottom: 0;
+    padding-top: 0.35rem;
+  }
+
+  .day-toggle input[type=checkbox] {
+    width: 17px; height: 17px;
+    accent-color: var(--gold);
+    cursor: pointer;
+  }
+
+  .times-list { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; flex: 1; }
+
+  .time-chip {
+    display: flex; align-items: center; gap: 0.3rem;
+    background: white; border: 1px solid var(--border); border-radius: 4px;
+    padding: 0.3rem 0.4rem;
+  }
+
+  .time-chip input[type=time] {
+    border: none; outline: none; background: transparent;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem; color: var(--ink);
+    padding: 0;
+  }
+
+  .time-chip button {
+    border: none; background: none;
+    color: var(--muted); cursor: pointer;
+    font-size: 1rem; line-height: 1;
+    padding: 0 0.2rem;
+  }
+
+  .time-chip button:hover:not(:disabled) { color: var(--rust); }
+  .time-chip button:disabled { cursor: not-allowed; opacity: 0.4; }
+
+  .add-time-btn { font-size: 0.75rem; }
+
   /* ── Preview list ────────────────────────────────── */
   .slot-preview-item {
     padding: 0.45rem 0;
@@ -685,7 +738,7 @@ document.dispatchEvent(new Event('db-ready'));
     <!-- Admin content -->
     <div id="adminContent" style="display:none;">
       <h2 class="section-title">Admin Setup</h2>
-      <p class="section-sub">Define the meeting window. Every <strong>Sunday</strong> → <strong>2:00 PM</strong> slot. Every <strong>weekday (Mon–Fri)</strong> → <strong>7:30 PM</strong> slot. Saturdays are skipped.</p>
+      <p class="section-sub">Define the meeting window, then choose which days of the week to offer and what time(s) each day.</p>
 
       <div class="card">
         <div class="card-label">Date Window</div>
@@ -699,6 +752,11 @@ document.dispatchEvent(new Event('db-ready'));
             <input type="date" id="endDate">
           </div>
         </div>
+
+        <hr class="divider">
+        <div class="card-label">Days &amp; Times</div>
+        <p class="text-muted mt-1" style="margin-bottom:0.5rem;">Turn on any day of the week you want to offer, then add one or more times for that day.</p>
+        <div id="dayTimesEditor"></div>
 
         <hr class="divider">
         <div class="card-label">Attendee Names</div>
@@ -742,8 +800,9 @@ const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Sat
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const SCORE  = { yes: 2, maybe: 1.5, no: 0 };
 
-let setup = null;   // { slots, attendees, passwordHash }
+let setup = null;   // { slots, attendees, passwordHash, dayConfig }
 let votes = {};     // { attendeeName: { slotId: 'yes'|'maybe'|'no' } }
+let dayConfig = defaultDayConfig();  // { Sunday: { enabled, times: ['HH:MM', ...] }, ... }
 let activeAttendee = null;
 let sessionVotes   = {};   // local draft before saving
 let adminUnlocked   = false;
@@ -900,12 +959,87 @@ function prefillAdminForm() {
     const el = document.getElementById('name' + (i+1));
     if (el) el.value = n;
   });
+  dayConfig = setup.dayConfig ? cloneDayConfig(setup.dayConfig) : defaultDayConfig();
+  renderDayTimesEditor();
   // default dates: today → +28 days
   const today = new Date();
   const end   = new Date(); end.setDate(today.getDate() + 28);
   const fmt   = d => d.toISOString().slice(0,10);
   if (!document.getElementById('startDate').value) document.getElementById('startDate').value = fmt(today);
   if (!document.getElementById('endDate').value)   document.getElementById('endDate').value   = fmt(end);
+}
+
+// ── Days & Times editor ─────────────────────────────────────
+function defaultDayConfig() {
+  const cfg = {};
+  DAYS.forEach(d => cfg[d] = { enabled: false, times: [] });
+  cfg['Sunday'] = { enabled: true, times: ['14:00'] };
+  ['Monday','Tuesday','Wednesday','Thursday','Friday'].forEach(d => cfg[d] = { enabled: true, times: ['19:30'] });
+  return cfg;
+}
+
+function cloneDayConfig(src) {
+  const cfg = defaultDayConfig();
+  DAYS.forEach(d => {
+    if (src[d]) cfg[d] = { enabled: !!src[d].enabled, times: [...(src[d].times || [])] };
+  });
+  return cfg;
+}
+
+function renderDayTimesEditor() {
+  const el = document.getElementById('dayTimesEditor');
+  if (!el) return;
+  el.innerHTML = DAYS.map(day => {
+    const { enabled, times } = dayConfig[day];
+    return `
+      <div class="day-time-row" style="opacity:${enabled ? 1 : 0.5};">
+        <label class="day-toggle">
+          <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleDay('${day}')">
+          ${day}
+        </label>
+        <div class="times-list">
+          ${times.map((t, i) => `
+            <span class="time-chip">
+              <input type="time" value="${t}" ${enabled ? '' : 'disabled'}
+                     onchange="updateDayTime('${day}',${i},this.value)">
+              <button type="button" ${enabled ? '' : 'disabled'} title="Remove this time"
+                      onclick="removeDayTime('${day}',${i})">×</button>
+            </span>`).join('')}
+          <button type="button" class="btn btn-outline btn-sm add-time-btn" ${enabled ? '' : 'disabled'}
+                  onclick="addDayTime('${day}')">+ Add time</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleDay(day) {
+  dayConfig[day].enabled = !dayConfig[day].enabled;
+  if (dayConfig[day].enabled && dayConfig[day].times.length === 0) {
+    dayConfig[day].times = ['19:00'];
+  }
+  renderDayTimesEditor();
+}
+
+function addDayTime(day) {
+  dayConfig[day].times.push('19:00');
+  renderDayTimesEditor();
+}
+
+function removeDayTime(day, idx) {
+  dayConfig[day].times.splice(idx, 1);
+  renderDayTimesEditor();
+}
+
+function updateDayTime(day, idx, val) {
+  dayConfig[day].times[idx] = val;
+}
+
+function formatTime12(t) {
+  const [hStr, mStr] = t.split(':');
+  let h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${mStr} ${ampm}`;
 }
 
 async function generateSlots() {
@@ -917,19 +1051,23 @@ async function generateSlots() {
   const names = [1,2,3,4].map(i => document.getElementById('name'+i).value.trim()).filter(Boolean);
   if (names.length < 2) { toast('Enter at least 2 attendee names.', true); return; }
 
+  const activeDays = DAYS.filter(d => dayConfig[d].enabled && dayConfig[d].times.length > 0);
+  if (!activeDays.length) { toast('Turn on at least one day and add a time.', true); return; }
+
   const slots = [];
   let cur = new Date(s + 'T12:00:00');
   const end2 = new Date(e + 'T12:00:00');
   while (cur <= end2) {
-    const dow = cur.getDay();
-    if (dow === 0)                  slots.push(makeSlot(cur, '2:00 PM'));
-    else if (dow >= 1 && dow <= 5)  slots.push(makeSlot(cur, '7:30 PM'));
+    const cfg = dayConfig[DAYS[cur.getDay()]];
+    if (cfg.enabled && cfg.times.length) {
+      [...cfg.times].sort().forEach(t => slots.push(makeSlot(cur, formatTime12(t))));
+    }
     cur.setDate(cur.getDate() + 1);
   }
 
   if (!slots.length) { toast('No valid dates in that window.', true); return; }
 
-  setup = { ...(setup||{}), slots, attendees: names };
+  setup = { ...(setup||{}), slots, attendees: names, dayConfig: cloneDayConfig(dayConfig) };
   votes = {};
   await Promise.all([window._db.saveSetup(setup), window._db.saveVotes({})]);
   toast(`✓ ${slots.length} slots created — votes cleared.`);
