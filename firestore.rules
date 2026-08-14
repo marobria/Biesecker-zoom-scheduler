@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /scheduler/setup {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['slots', 'attendees', 'passwordHash', 'dayConfig'])
+                            && (!('slots' in request.resource.data) || request.resource.data.slots is list)
+                            && (!('attendees' in request.resource.data) || request.resource.data.attendees is list)
+                            && (!('passwordHash' in request.resource.data) ||
+                                (request.resource.data.passwordHash is string && request.resource.data.passwordHash.size() == 64))
+                            && (!('dayConfig' in request.resource.data) || request.resource.data.dayConfig is map);
+      allow delete: if false;
+    }
+
+    match /scheduler/votes {
+      allow read: if true;
+      allow create, update: if request.resource.data.size() <= 100;
+      allow delete: if false;
+    }
+
+    // Block everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
